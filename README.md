@@ -1,36 +1,60 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Melodia
 
-## Getting Started
+A lightweight choreography timeline editor and rehearsal assistant for dance
+groups, designed mobile-first.
 
-First, run the development server:
+Melodia is **not** a DAW. It's a simple, visual rehearsal tool — load a song,
+mark choreography cues on the timeline, loop a tricky section, rehearse from
+your phone.
+
+## Features (MVP)
+
+- Waveform playback with [wavesurfer.js](https://wavesurfer.xyz/)
+- Tap / drag the timeline to seek
+- Markers above the waveform (`comment`, `action`, `flag`) with title + note
+- Loop regions you can drag, resize, toggle, and clear
+- Sticky playback controls on mobile
+- Dark, modern UI built with Tailwind CSS
+
+## Tech
+
+- Next.js (App Router) + React + TypeScript
+- Tailwind CSS v4
+- wavesurfer.js + regions/timeline plugins
+- Zustand (state)
+- Radix UI Dialog (marker modal)
+- lucide-react (icons)
+
+## Getting started
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open <http://localhost:3000>.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### Add your audio
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Place an MP3 at `public/audio/song-1.mp3` and refresh the page.
+See `public/audio/README.md` for details.
 
-## Learn More
+## Project structure
 
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```
+app/
+  page.tsx          # main rehearsal screen
+  layout.tsx        # html + fonts + dark theme
+  globals.css
+components/
+  WaveformPlayer.tsx
+  TimelineMarkers.tsx
+  MarkerModal.tsx
+  PlaybackControls.tsx
+store/
+  useTimelineStore.ts
+lib/
+  wavesurfer.ts
+public/
+  audio/
+```
