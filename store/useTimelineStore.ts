@@ -55,6 +55,8 @@ type TimelineState = {
   currentTime: number;
   isPlaying: boolean;
   audioError: string | null;
+  /** True while WaveSurfer is loading another MP3 after a track change. */
+  trackLoadBusy: boolean;
 
   activeTrackIndex: number;
   /** WaveformPlayer applies this after load/ready */
@@ -66,6 +68,7 @@ type TimelineState = {
   setCurrentTime: (time: number) => void;
   setIsPlaying: (playing: boolean) => void;
   setAudioError: (error: string | null) => void;
+  setTrackLoadBusy: (busy: boolean) => void;
 
   setActiveTrackIndex: (index: number) => void;
   clearPendingFileSeek: () => void;
@@ -160,21 +163,21 @@ const exampleMarkers: Marker[] = exampleMarkersBase.map((m) => ({
   cueEndTime: null,
 }));
 
-/** Song 1: 0:00–1:57 · Song 2: 1:00–2:10 · Song 3: 0:50–3:00 (in-file windows) */
+/** Song 1: 0:00–2:09 · Song 2: 1:00–2:11 · Song 3: 0:50–3:00 (in-file windows) */
 const initialTracks: Track[] = [
   {
     id: "track-1",
     name: "Song 1",
     src: "/audio/song-1.mp3",
     segmentStart: 0,
-    segmentEnd: 1 * 60 + 57,
+    segmentEnd: 2 * 60 + 9,
   },
   {
     id: "track-2",
     name: "Song 2",
     src: "/audio/song-2.mp3",
     segmentStart: 1 * 60,
-    segmentEnd: 2 * 60 + 10,
+    segmentEnd: 2 * 60 + 11,
   },
   {
     id: "track-3",
@@ -369,6 +372,7 @@ export const useTimelineStore = create<TimelineState>()(
   currentTime: 0,
   isPlaying: false,
   audioError: null,
+  trackLoadBusy: false,
   activeTrackIndex: 0,
   pendingFileSeek: null,
   selectedMarkerId: null,
@@ -382,6 +386,7 @@ export const useTimelineStore = create<TimelineState>()(
   setCurrentTime: (time) => set({ currentTime: time }),
   setIsPlaying: (playing) => set({ isPlaying: playing }),
   setAudioError: (error) => set({ audioError: error }),
+  setTrackLoadBusy: (busy) => set({ trackLoadBusy: busy }),
 
   setActiveTrackIndex: (index) =>
     set((state) => ({

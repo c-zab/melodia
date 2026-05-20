@@ -2,17 +2,25 @@
 
 import { Pause, Play, Plus, Repeat, X } from "lucide-react";
 
-import { rehearsalDuration } from "@/lib/rehearsal";
+import {
+  globalToBlockPosition,
+  loopRegionInActiveBlock,
+  rehearsalDuration,
+} from "@/lib/rehearsal";
 import { useTimelineStore } from "@/store/useTimelineStore";
 import { formatTime, playPause, skipSeconds } from "@/lib/wavesurfer";
 
-const LOOP_LENGTH_SECONDS = 8;
+/** Rehearse the last N seconds up to the playhead (e.g. “that phrase again”). */
+const LOOP_LENGTH_SECONDS = 10;
 
 export default function PlaybackControls() {
   const isPlaying = useTimelineStore((s) => s.isPlaying);
   const currentTime = useTimelineStore((s) => s.currentTime);
+  const activeTrackIndex = useTimelineStore((s) => s.activeTrackIndex);
   const tracks = useTimelineStore((s) => s.project.tracks);
   const total = rehearsalDuration(tracks);
+  const activeTrack = tracks[activeTrackIndex];
+  const blockPos = globalToBlockPosition(tracks, activeTrackIndex, currentTime);
   const loopRegion = useTimelineStore((s) => s.project.loopRegion);
   const setLoopRegion = useTimelineStore((s) => s.setLoopRegion);
   const toggleLoopEnabled = useTimelineStore((s) => s.toggleLoopEnabled);
@@ -23,40 +31,66 @@ export default function PlaybackControls() {
 
   const handleLoopButton = () => {
     if (!loopRegion) {
-      if (total <= 0) return;
-      const start = Math.max(0, currentTime);
-      const end = Math.min(total, start + LOOP_LENGTH_SECONDS);
-      setLoopRegion(start, end);
+      if (total <= 0 || !activeTrack) return;
+      const region = loopRegionInActiveBlock(
+        tracks,
+        activeTrackIndex,
+        currentTime,
+        LOOP_LENGTH_SECONDS,
+      );
+      if (!region) return;
+      setLoopRegion(region.start, region.end);
       return;
     }
     toggleLoopEnabled();
   };
 
   const loopButtonLabel = !loopRegion
-    ? "Add loop"
+    ? `Loop last ${LOOP_LENGTH_SECONDS}s`
     : loopRegion.enabled
       ? "Looping"
       : "Loop off";
 
   return (
-    <div className="sticky bottom-0 z-30 w-full border-t border-zinc-800 bg-zinc-950/95 backdrop-blur supports-[backdrop-filter]:bg-zinc-950/80 sm:border-0 sm:bg-transparent">
+    <div className="sticky bottom-0 z-30 w-full border-t border-slate-800/80 bg-slate-950/95 backdrop-blur supports-[backdrop-filter]:bg-slate-950/85 sm:border-0 sm:bg-transparent">
       <div className="mx-auto flex w-full max-w-4xl flex-col gap-3 px-3 py-3 sm:px-6 sm:py-4">
-        <div className="flex items-center justify-between text-xs font-mono text-zinc-400">
-          <span>{formatTime(currentTime)}</span>
+        <div className="flex items-center justify-between gap-2 text-xs font-mono text-slate-400">
+          <span className="min-w-0 truncate text-left">
+            <span className="text-slate-200">
+              {formatTime(blockPos.localInBlock)}
+            </span>
+            <span className="text-slate-600">
+              {" "}
+              / {formatTime(blockPos.blockDuration)}
+            </span>
+            {activeTrack ? (
+              <span className="block truncate text-[10px] text-slate-500">
+                {activeTrack.name}
+              </span>
+            ) : null}
+          </span>
           {loopRegion ? (
-            <span className="flex items-center gap-2 rounded-full bg-violet-500/10 px-2.5 py-0.5 text-[11px] text-violet-200 ring-1 ring-violet-400/30">
-              Loop {formatTime(loopRegion.start)} – {formatTime(loopRegion.end)}
+            <span className="flex items-center gap-2 rounded-full bg-cyan-500/10 px-2.5 py-0.5 text-[11px] text-cyan-200 ring-1 ring-cyan-400/30">
+              Loop {formatTime(loopRegion.start)}–{formatTime(loopRegion.end)}
+              <span className="text-cyan-300/60">
+                ({formatTime(loopRegion.end - loopRegion.start)})
+              </span>
               <button
                 type="button"
                 onClick={clearLoopRegion}
                 aria-label="Clear loop"
-                className="rounded-full p-0.5 text-violet-200 hover:bg-violet-500/20"
+                className="rounded-full p-0.5 text-cyan-200 hover:bg-cyan-500/20"
               >
                 <X className="h-3 w-3" />
               </button>
             </span>
           ) : null}
-          <span>{formatTime(total)}</span>
+          <span className="shrink-0 text-right">
+            <span className="text-slate-500">{formatTime(currentTime)}</span>
+            <span className="text-slate-600"> / </span>
+            <span>{formatTime(total)}</span>
+            <span className="block text-[10px] text-slate-600">rehearsal</span>
+          </span>
         </div>
 
         <div className="flex items-center justify-between gap-2 sm:justify-center sm:gap-4">
@@ -68,7 +102,7 @@ export default function PlaybackControls() {
             type="button"
             onClick={playPause}
             aria-label={isPlaying ? "Pause" : "Play"}
-            className="grid h-14 w-14 place-items-center rounded-full bg-violet-500 text-zinc-950 shadow-lg shadow-violet-500/30 transition hover:bg-violet-400 active:scale-[0.97] sm:h-16 sm:w-16"
+            className="grid h-14 w-14 place-items-center rounded-full bg-cyan-400 text-slate-950 shadow-lg shadow-cyan-500/30 transition hover:bg-cyan-300 active:scale-[0.97] sm:h-16 sm:w-16"
           >
             {isPlaying ? (
               <Pause className="h-6 w-6" />
@@ -81,7 +115,7 @@ export default function PlaybackControls() {
             <span className="text-xs font-semibold">+5s</span>
           </ControlButton>
 
-          <div className="hidden h-8 w-px bg-zinc-800 sm:block" />
+          <div className="hidden h-8 w-px bg-slate-800 sm:block" />
 
           <ControlButton onClick={handleAddMarker} aria-label="Add marker">
             <Plus className="h-5 w-5" />
@@ -96,8 +130,8 @@ export default function PlaybackControls() {
           </ControlButton>
         </div>
 
-        <div className="flex items-center justify-center gap-3 text-[11px] text-zinc-500 sm:hidden">
-          <span className="rounded-full bg-zinc-900 px-2 py-0.5 ring-1 ring-zinc-800">
+        <div className="flex items-center justify-center gap-3 text-[11px] text-slate-500 sm:hidden">
+          <span className="rounded-full bg-slate-900 px-2 py-0.5 ring-1 ring-slate-800">
             {loopButtonLabel}
           </span>
         </div>
@@ -124,8 +158,8 @@ function ControlButton({
       aria-label={ariaLabel}
       className={`grid h-11 w-11 place-items-center rounded-xl ring-1 transition active:scale-[0.97] sm:h-12 sm:w-12 ${
         active
-          ? "bg-violet-500/20 text-violet-100 ring-violet-400/50"
-          : "bg-zinc-900 text-zinc-300 ring-zinc-800 hover:bg-zinc-800 hover:text-zinc-100"
+          ? "bg-violet-500/20 text-violet-100 ring-violet-400/50 shadow-sm shadow-violet-500/20"
+          : "bg-slate-900/90 text-slate-300 ring-slate-700/80 hover:bg-slate-800 hover:text-slate-50"
       }`}
     >
       {children}

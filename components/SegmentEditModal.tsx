@@ -264,7 +264,7 @@ function SegmentEditorBody({
               value={endStr}
               onChange={(e) => setEndStr(e.target.value)}
               className="w-full rounded-lg bg-zinc-950 px-2.5 py-2 font-mono text-sm text-zinc-100 ring-1 ring-zinc-700 focus:outline-none focus:ring-2 focus:ring-violet-400"
-              placeholder="1:57"
+              placeholder="2:09"
               autoComplete="off"
             />
           </label>

@@ -15,13 +15,13 @@ const MARKER_ICON: Record<MarkerType, typeof Activity> = {
 
 const MARKER_TINT: Record<MarkerType, string> = {
   comment: "text-sky-200 bg-sky-500/15 ring-sky-400/40",
-  action: "text-violet-100 bg-violet-500/20 ring-violet-400/50",
+  action: "text-cyan-100 bg-cyan-500/15 ring-cyan-400/45",
   cue: "text-amber-200 bg-amber-500/15 ring-amber-400/40",
 };
 
 const MARKER_PIN: Record<MarkerType, string> = {
   comment: "bg-sky-400/70",
-  action: "bg-violet-400/80",
+  action: "bg-cyan-400/80",
   cue: "bg-amber-400/70",
 };
 
@@ -46,28 +46,15 @@ export default function TimelineMarkers() {
           .filter((x): x is { marker: Marker; fileT: number } => x !== null)
       : [];
 
-  const otherCount = markers.length - visible.length;
-
   return (
-    <div className="space-y-1 px-3 sm:px-4">
-      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-[10px] text-zinc-500">
-        <span>
-          <span className="font-medium text-zinc-400">Cues</span> en esta canción
-          <span className="text-zinc-600"> (alineadas al waveform)</span>
-        </span>
-        {otherCount > 0 ? (
-          <span className="font-mono text-zinc-600">
-            +{otherCount} on other blocks
-          </span>
-        ) : null}
-      </div>
+    <div className="px-3 sm:px-4">
       <div className="relative h-10 w-full">
         {fileDuration <= 0 ? (
-          <div className="flex h-full items-center text-[11px] text-zinc-600">
+          <div className="flex h-full items-center text-[11px] text-slate-600">
             Load audio to place cues on the waveform…
           </div>
         ) : visible.length === 0 ? (
-          <div className="flex h-full items-center text-[11px] text-zinc-600">
+          <div className="flex h-full items-center text-[11px] text-slate-600">
             No cues in this block yet — add markers while this song is active, or
             switch blocks to see other cues.
           </div>

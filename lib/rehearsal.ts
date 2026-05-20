@@ -27,6 +27,40 @@ export function segmentGlobalOffsets(tracks: TrackSegment[]): number[] {
   return out;
 }
 
+/**
+ * Loop window for the active song block only: last N seconds up to the playhead,
+ * or from the block start if that would cross into a previous song.
+ */
+export function loopRegionInActiveBlock(
+  tracks: TrackSegment[],
+  activeIndex: number,
+  globalPlayhead: number,
+  windowSeconds: number,
+): { start: number; end: number } | null {
+  if (activeIndex < 0 || activeIndex >= tracks.length) return null;
+  const offsets = segmentGlobalOffsets(tracks);
+  const blockStart = offsets[activeIndex];
+  const blockEnd = blockStart + segmentLength(tracks[activeIndex]);
+  let end = clamp(globalPlayhead, blockStart, blockEnd);
+  let start = Math.max(blockStart, end - windowSeconds);
+  if (end - start < 0.1) {
+    start = blockStart;
+    end = Math.min(blockEnd, blockStart + windowSeconds);
+  }
+  return { start, end };
+}
+
+/** Global loop start for playback wrap — never before the active block’s start. */
+export function loopRestartGlobalTime(
+  tracks: TrackSegment[],
+  activeIndex: number,
+  loopStart: number,
+): number {
+  if (activeIndex < 0 || activeIndex >= tracks.length) return loopStart;
+  const blockStart = segmentGlobalOffsets(tracks)[activeIndex];
+  return Math.max(loopStart, blockStart);
+}
+
 /** Map a global loop window to file-time bounds for the active track, or null if no overlap. */
 export function globalLoopToFileRegion(
   tracks: TrackSegment[],
@@ -91,6 +125,30 @@ export function globalTimeToTrackFile(
   return {
     trackIndex: li,
     fileTime: clamp(lt.segmentEnd - 0.05, lt.segmentStart, lt.segmentEnd),
+  };
+}
+
+/** Global rehearsal clock → position inside one track block (for UI labels). */
+export function globalToBlockPosition(
+  tracks: TrackSegment[],
+  trackIndex: number,
+  globalSeconds: number,
+): { localInBlock: number; blockDuration: number; fileTime: number } {
+  if (trackIndex < 0 || trackIndex >= tracks.length) {
+    return { localInBlock: 0, blockDuration: 0, fileTime: 0 };
+  }
+  const offsets = segmentGlobalOffsets(tracks);
+  const tr = tracks[trackIndex];
+  const blockDuration = segmentLength(tr);
+  const localInBlock = clamp(
+    globalSeconds - offsets[trackIndex],
+    0,
+    blockDuration,
+  );
+  return {
+    localInBlock,
+    blockDuration,
+    fileTime: tr.segmentStart + localInBlock,
   };
 }
 
