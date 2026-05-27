@@ -2,9 +2,24 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { nanoid } from "nanoid";
 
+import { danceLocalToFile, danceSegmentLength } from "@/lib/dance";
 import {
-  type TrackSegment,
+  type DanceCategoryId,
+  inferDanceCategory,
+} from "@/lib/dances";
+import {
+  getActiveMix,
+  isCompositeMix,
+  mixPlaybackDuration,
+  type LoopRegion,
+  type Marker,
+  type Mix,
+  type MixKind,
+} from "@/lib/mix";
+import { normalizeMarkerType, type MarkerType } from "@/lib/markers";
+import {
   type RehearsalStep,
+  type TrackSegment,
   clamp,
   globalTimeToTrackFile,
   rehearsalDuration,
@@ -12,54 +27,22 @@ import {
   segmentGlobalOffsets,
 } from "@/lib/rehearsal";
 
+export type { DanceCategoryId } from "@/lib/dances";
+export { categoryLabel } from "@/lib/dances";
+export type { LoopRegion, Marker, MarkerType, Mix, MixKind } from "@/lib/mix";
+export { getActiveMix, isCompositeMix, mixPlaybackDuration } from "@/lib/mix";
 export type { RehearsalStep } from "@/lib/rehearsal";
-
-export type MarkerType = "comment" | "action" | "cue";
-
-export type Marker = {
-  id: string;
-  /** Seconds on the full rehearsal timeline (sum of segment lengths) */
-  time: number;
-  type: MarkerType;
-  title: string;
-  note: string;
-  /** Rehearsal step this cue belongs to (see `project.steps`). */
-  stepId: string | null;
-  /**
-   * Optional global end time for this cue (rehearsal seconds).
-   * When set after `time`, playback can treat the row as an active “window”.
-   */
-  cueEndTime: number | null;
-};
-
-export type LoopRegion = {
-  start: number;
-  end: number;
-  enabled: boolean;
-};
-
 export type Track = TrackSegment;
 
-export type Project = {
-  title: string;
-  tracks: Track[];
-  /** Ordered rehearsal steps (paso 1, paso 2, …); markers reference `stepId`. */
-  steps: RehearsalStep[];
-  markers: Marker[];
-  loopRegion?: LoopRegion;
-};
-
 type TimelineState = {
-  project: Project;
-  /** Global rehearsal clock (seconds from start of segment 1 through all segments) */
+  mixes: Mix[];
+  activeMixId: string;
+  /** Index into the active mix’s `tracks` (composite only; 0 for single). */
+  activeTrackIndex: number;
   currentTime: number;
   isPlaying: boolean;
   audioError: string | null;
-  /** True while WaveSurfer is loading another MP3 after a track change. */
   trackLoadBusy: boolean;
-
-  activeTrackIndex: number;
-  /** WaveformPlayer applies this after load/ready */
   pendingFileSeek: number | null;
 
   selectedMarkerId: string | null;
@@ -69,16 +52,14 @@ type TimelineState = {
   setIsPlaying: (playing: boolean) => void;
   setAudioError: (error: string | null) => void;
   setTrackLoadBusy: (busy: boolean) => void;
-
-  setActiveTrackIndex: (index: number) => void;
   clearPendingFileSeek: () => void;
-  /** Seek the rehearsal timeline; updates active track + pending file seek */
-  seekRehearsal: (globalSeconds: number) => void;
-  /** Jump to the start of a block (explicit track pick from the UI). */
-  jumpToTrack: (trackIndex: number) => void;
-  skipRehearsal: (deltaSeconds: number) => void;
 
-  addMarker: (globalTime: number, type?: MarkerType) => string;
+  setActiveMix: (mixId: string) => void;
+  jumpToTrack: (trackIndex: number) => void;
+  seekPlayback: (seconds: number) => void;
+  skipPlayback: (deltaSeconds: number) => void;
+
+  addMarker: (time: number, type?: MarkerType, title?: string) => string;
   updateMarker: (id: string, patch: Partial<Omit<Marker, "id">>) => void;
   deleteMarker: (id: string) => void;
 
@@ -92,18 +73,11 @@ type TimelineState = {
   fileDuration: number;
   setFileDuration: (seconds: number) => void;
 
-  isTrackSegmentsModalOpen: boolean;
-  segmentsFormKey: number;
-  /** Which track is being edited in the segment modal (`null` when closed). */
-  segmentEditTrackIndex: number | null;
-  openTrackSegmentsModal: (trackIndex: number) => void;
-  closeTrackSegmentsModal: () => void;
-  setTrackSegments: (
-    updates: Array<{ index: number; segmentStart: number; segmentEnd: number }>,
-  ) => void;
+  /** Expand the active single-track mix window to full decoded file (Caporales). */
+  setActiveTrackWindow: (segmentStart: number, segmentEnd: number) => void;
 };
 
-const initialSteps: RehearsalStep[] = [
+const morenadaSteps: RehearsalStep[] = [
   { id: "step-basico-a", title: "Paso básico", startTime: 0 },
   { id: "step-1", title: "Paso 1", startTime: 8 },
   { id: "step-2", title: "Paso 2", startTime: 20 },
@@ -112,18 +86,18 @@ const initialSteps: RehearsalStep[] = [
   { id: "step-final", title: "Paso final / transición", startTime: 100 },
 ];
 
-const exampleMarkersBase = [
+const morenadaMarkersBase = [
   {
     id: nanoid(8),
     time: 4,
-    type: "action" as const,
+    type: "note" as const,
     title: "Levantar sombreros",
     note: "Todos a la vez, mirando al frente.",
   },
   {
     id: nanoid(8),
     time: 12,
-    type: "comment" as const,
+    type: "note" as const,
     title: "Entrada parejas",
     note: "Pareja A entra desde la izquierda.",
   },
@@ -137,34 +111,27 @@ const exampleMarkersBase = [
   {
     id: nanoid(8),
     time: 40,
-    type: "action" as const,
+    type: "note" as const,
     title: "Bajar manos",
     note: "Movimiento suave, contar 4 tiempos.",
   },
   {
     id: nanoid(8),
     time: 56,
-    type: "action" as const,
+    type: "cue" as const,
     title: "Ir a esquinas",
     note: "Cuatro grupos a las cuatro esquinas.",
   },
-  {
-    id: nanoid(8),
-    time: 125,
-    type: "cue" as const,
-    title: "Transición a canción 2",
-    note: "Primer bloque del segundo tema.",
-  },
 ];
 
-const exampleMarkers: Marker[] = exampleMarkersBase.map((m) => ({
+const morenadaMarkers: Marker[] = morenadaMarkersBase.map((m) => ({
   ...m,
-  stepId: resolveStepIdAtTime(initialSteps, m.time),
+  stepId: resolveStepIdAtTime(morenadaSteps, m.time),
   cueEndTime: null,
 }));
 
-/** Song 1: 0:00–2:09 · Song 2: 1:00–2:11 · Song 3: 0:50–3:00 (in-file windows) */
-const initialTracks: Track[] = [
+/** Song 1: 0:00–2:09 · Song 2: 1:00–2:11 · Song 3: 0:50–3:00 */
+const morenadaTracks: TrackSegment[] = [
   {
     id: "track-1",
     name: "Song 1",
@@ -188,23 +155,49 @@ const initialTracks: Track[] = [
   },
 ];
 
-const initialProject: Project = {
-  title: "Choreography demo",
-  tracks: initialTracks,
-  steps: initialSteps,
-  markers: exampleMarkers,
-  loopRegion: undefined,
-};
+export const initialMixes: Mix[] = [
+  {
+    id: "mix-morenada",
+    category: "morenada",
+    name: "Morenada",
+    kind: "composite",
+    tracks: morenadaTracks,
+    markers: morenadaMarkers,
+    steps: morenadaSteps,
+    playbackTime: 0,
+  },
+  {
+    id: "mix-caporales",
+    category: "caporales",
+    name: "Caporales",
+    kind: "single",
+    tracks: [
+      {
+        id: "track-caporales",
+        name: "Caporales",
+        src: "/audio/caporales-julia.mp3",
+        segmentStart: 0,
+        segmentEnd: 216,
+      },
+    ],
+    markers: [],
+    steps: [],
+    playbackTime: 0,
+  },
+];
 
 const sortByTime = (markers: Marker[]) =>
   [...markers].sort((a, b) => a.time - b.time);
 
-const STORAGE_KEY = "melodia.timeline.v1";
+const STORAGE_KEY = "melodia.timeline.v6";
 
-function mergeTracksFromStorage(raw: unknown, fallback: Track[]): Track[] {
+function mergeTracksFromStorage(
+  raw: unknown,
+  fallback: TrackSegment[],
+): TrackSegment[] {
   if (!Array.isArray(raw) || raw.length === 0) return fallback;
   return raw.map((item, i) => {
-    const t = item as Partial<Track>;
+    const t = item as Partial<TrackSegment>;
     const f = fallback[i];
     const segmentStart =
       typeof t.segmentStart === "number" && Number.isFinite(t.segmentStart)
@@ -221,7 +214,10 @@ function mergeTracksFromStorage(raw: unknown, fallback: Track[]): Track[] {
         typeof t.name === "string" && t.name.trim()
           ? t.name.trim()
           : (f?.name ?? `Song ${i + 1}`),
-      src: typeof t.src === "string" && t.src ? t.src : (f?.src ?? "/audio/song-1.mp3"),
+      src:
+        typeof t.src === "string" && t.src
+          ? t.src
+          : (f?.src ?? "/audio/song-1.mp3"),
       segmentStart,
       segmentEnd,
     };
@@ -232,7 +228,8 @@ function mergeStepsFromStorage(
   raw: unknown,
   fallback: RehearsalStep[],
 ): RehearsalStep[] {
-  if (!Array.isArray(raw) || raw.length === 0) return fallback;
+  if (!Array.isArray(raw)) return [...fallback];
+  if (raw.length === 0) return [];
   return raw.map((item, i) => {
     const s = item as Partial<RehearsalStep>;
     const f = fallback[i];
@@ -254,10 +251,7 @@ function mergeMarkersFromStorage(raw: unknown, steps: RehearsalStep[]): Marker[]
   if (!Array.isArray(raw)) return [];
   return raw.map((item) => {
     const m = item as Partial<Marker>;
-    const typ: MarkerType =
-      m.type === "comment" || m.type === "action" || m.type === "cue"
-        ? m.type
-        : "comment";
+    const typ = normalizeMarkerType(m.type);
     const time =
       typeof m.time === "number" && Number.isFinite(m.time) ? Math.max(0, m.time) : 0;
     const stepIdFromDisk =
@@ -286,12 +280,21 @@ function mergeMarkersFromStorage(raw: unknown, steps: RehearsalStep[]): Marker[]
   });
 }
 
-function mergeProjectFromStorage(raw: unknown): Project {
-  if (!raw || typeof raw !== "object") return initialProject;
-  const p = raw as Partial<Project>;
-  const tracks = mergeTracksFromStorage(p.tracks, initialProject.tracks);
-  const steps = mergeStepsFromStorage(p.steps, initialProject.steps);
-  let markers = mergeMarkersFromStorage(p.markers, steps);
+function mergeMixItem(
+  item: Partial<Mix>,
+  fallbackById: Map<string, Mix>,
+  index: number,
+): Mix {
+  const id =
+    typeof item.id === "string" && item.id ? item.id : `mix-${index}`;
+  const f = fallbackById.get(id) ?? initialMixes[index] ?? initialMixes[0];
+  const kind: MixKind =
+    item.kind === "single" || item.kind === "composite"
+      ? item.kind
+      : (f?.kind ?? "single");
+  const tracks = mergeTracksFromStorage(item.tracks, f?.tracks ?? []);
+  const steps = mergeStepsFromStorage(item.steps, f?.steps ?? []);
+  let markers = mergeMarkersFromStorage(item.markers, steps);
   markers = markers.map((m) => ({
     ...m,
     stepId:
@@ -299,30 +302,138 @@ function mergeProjectFromStorage(raw: unknown): Project {
         ? m.stepId
         : resolveStepIdAtTime(steps, m.time),
   }));
-  const title =
-    typeof p.title === "string" && p.title.trim()
-      ? p.title.trim()
-      : initialProject.title;
   let loopRegion: LoopRegion | undefined;
   if (
-    p.loopRegion &&
-    typeof p.loopRegion.start === "number" &&
-    typeof p.loopRegion.end === "number" &&
-    Number.isFinite(p.loopRegion.start) &&
-    Number.isFinite(p.loopRegion.end)
+    item.loopRegion &&
+    typeof item.loopRegion.start === "number" &&
+    typeof item.loopRegion.end === "number" &&
+    Number.isFinite(item.loopRegion.start) &&
+    Number.isFinite(item.loopRegion.end)
   ) {
     loopRegion = {
-      start: Math.max(0, p.loopRegion.start),
-      end: Math.max(p.loopRegion.start + 0.1, p.loopRegion.end),
-      enabled: Boolean(p.loopRegion.enabled),
+      start: Math.max(0, item.loopRegion.start),
+      end: Math.max(item.loopRegion.start + 0.1, item.loopRegion.end),
+      enabled: Boolean(item.loopRegion.enabled),
     };
+  } else if (f?.loopRegion) {
+    loopRegion = f.loopRegion;
   }
-  const total = rehearsalDuration(tracks);
+  const len = mixPlaybackDuration({
+    ...f,
+    id,
+    kind,
+    tracks,
+    markers,
+    steps,
+  });
   if (loopRegion) {
-    loopRegion.start = clamp(loopRegion.start, 0, total);
-    loopRegion.end = clamp(loopRegion.end, loopRegion.start + 0.1, total);
+    loopRegion.start = clamp(loopRegion.start, 0, len);
+    loopRegion.end = clamp(loopRegion.end, loopRegion.start + 0.1, len);
   }
-  return { title, tracks, steps, markers, loopRegion };
+  const playbackTime =
+    typeof item.playbackTime === "number" && Number.isFinite(item.playbackTime)
+      ? clamp(item.playbackTime, 0, len)
+      : (f?.playbackTime ?? 0);
+  const category = inferDanceCategory({
+    id,
+    category: item.category ?? f?.category,
+  });
+  return {
+    id,
+    category,
+    name:
+      typeof item.name === "string" && item.name.trim()
+        ? item.name.trim()
+        : (f?.name ?? "Mix"),
+    kind,
+    tracks,
+    markers,
+    steps,
+    loopRegion,
+    playbackTime,
+  };
+}
+
+function mergeMixesFromStorage(raw: unknown, fallback: Mix[]): Mix[] {
+  if (!Array.isArray(raw) || raw.length === 0) return fallback;
+  const fallbackById = new Map(fallback.map((m) => [m.id, m]));
+  const merged = raw.map((item, i) =>
+    mergeMixItem(item as Partial<Mix>, fallbackById, i),
+  );
+  const knownIds = new Set(merged.map((m) => m.id));
+  for (const mix of fallback) {
+    if (!knownIds.has(mix.id)) {
+      merged.push(mix);
+      knownIds.add(mix.id);
+    }
+  }
+  return merged;
+}
+
+function migrateLegacyDances(raw: unknown): Mix[] | null {
+  if (!Array.isArray(raw)) return null;
+  const morenada = raw.find(
+    (d) =>
+      (d as { id?: string }).id?.includes("morenada") &&
+      Array.isArray((d as { markers?: unknown }).markers) &&
+      ((d as { markers?: unknown[] }).markers?.length ?? 0) > 0,
+  ) as Partial<Mix> | undefined;
+  const cap = raw.find((d) =>
+    (d as { id?: string }).id?.includes("caporales"),
+  ) as Partial<Mix> | undefined;
+  return [
+    mergeMixItem(
+      {
+        ...initialMixes[0],
+        markers: morenada?.markers ?? initialMixes[0].markers,
+        steps: morenada?.steps ?? initialMixes[0].steps,
+        playbackTime:
+          typeof morenada?.playbackTime === "number"
+            ? morenada.playbackTime
+            : 0,
+      },
+      new Map(initialMixes.map((m) => [m.id, m])),
+      0,
+    ),
+    mergeMixItem(
+      {
+        ...initialMixes[1],
+        markers: cap?.markers ?? [],
+        playbackTime:
+          typeof cap?.playbackTime === "number" ? cap.playbackTime : 0,
+      },
+      new Map(initialMixes.map((m) => [m.id, m])),
+      1,
+    ),
+  ];
+}
+
+function migrateLegacyProject(raw: unknown): Mix[] | null {
+  if (!raw || typeof raw !== "object") return null;
+  const p = raw as {
+    tracks?: unknown;
+    markers?: unknown;
+    steps?: unknown;
+    loopRegion?: LoopRegion;
+  };
+  if (!Array.isArray(p.tracks)) return null;
+  return [
+    mergeMixItem(
+      {
+        ...initialMixes[0],
+        tracks: mergeTracksFromStorage(p.tracks, initialMixes[0].tracks),
+        markers: mergeMarkersFromStorage(
+          p.markers,
+          mergeStepsFromStorage(p.steps, initialMixes[0].steps),
+        ),
+        steps: mergeStepsFromStorage(p.steps, initialMixes[0].steps),
+        loopRegion: p.loopRegion,
+      },
+      new Map(initialMixes.map((m) => [m.id, m])),
+      0,
+    ),
+    initialMixes[1],
+  ];
 }
 
 function mergePersistedTimeline(
@@ -330,25 +441,70 @@ function mergePersistedTimeline(
   currentState: TimelineState,
 ): TimelineState {
   const p = persistedState as
-    | Partial<Pick<TimelineState, "project" | "activeTrackIndex" | "currentTime">>
+    | Partial<
+        Pick<
+          TimelineState,
+          "mixes" | "activeMixId" | "currentTime" | "activeTrackIndex"
+        >
+      > & {
+        dances?: unknown;
+        activeDanceId?: string;
+        project?: unknown;
+      }
     | undefined;
-  if (!p?.project) return currentState;
-  const project = mergeProjectFromStorage(p.project);
-  const total = rehearsalDuration(project.tracks);
-  const currentTime = clamp(
+  if (!p) return currentState;
+
+  let mixes = initialMixes;
+  if (p.mixes) {
+    mixes = mergeMixesFromStorage(p.mixes, initialMixes);
+  } else if (p.dances) {
+    const migrated = migrateLegacyDances(p.dances);
+    if (migrated) mixes = migrated;
+  } else if (p.project) {
+    const migrated = migrateLegacyProject(p.project);
+    if (migrated) mixes = migrated;
+  }
+
+  const activeMixId =
+    typeof p.activeMixId === "string" &&
+    mixes.some((m) => m.id === p.activeMixId)
+      ? p.activeMixId
+      : typeof p.activeDanceId === "string" && p.activeDanceId.includes("caporales")
+        ? "mix-caporales"
+        : mixes[0]?.id ?? "";
+
+  const mix = getActiveMix(mixes, activeMixId);
+  const total = mix ? mixPlaybackDuration(mix) : 0;
+  let currentTime = clamp(
     typeof p.currentTime === "number" && Number.isFinite(p.currentTime)
       ? p.currentTime
-      : 0,
+      : (mix?.playbackTime ?? 0),
     0,
     Math.max(0, total - 1e-6),
   );
-  const { trackIndex, fileTime } = globalTimeToTrackFile(project.tracks, currentTime);
+
+  let activeTrackIndex = 0;
+  let pendingFileSeek: number | null = null;
+
+  if (mix && isCompositeMix(mix)) {
+    const { trackIndex, fileTime } = globalTimeToTrackFile(mix.tracks, currentTime);
+    activeTrackIndex = trackIndex;
+    pendingFileSeek = fileTime;
+  } else if (mix?.tracks[0]) {
+    const tr = mix.tracks[0];
+    currentTime = clamp(currentTime, 0, danceSegmentLength(tr));
+    pendingFileSeek = danceLocalToFile(tr, currentTime);
+  }
+
   return {
     ...currentState,
-    project,
-    activeTrackIndex: trackIndex,
+    mixes,
+    activeMixId,
+    activeTrackIndex,
     currentTime,
-    pendingFileSeek: fileTime,
+    pendingFileSeek,
+    selectedMarkerId: null,
+    isMarkerModalOpen: false,
   };
 }
 
@@ -365,210 +521,282 @@ function noopStorage(): Storage {
   } as Storage;
 }
 
+function persistPlaybackOnMix(
+  mixes: Mix[],
+  mixId: string,
+  playbackTime: number,
+): Mix[] {
+  return mixes.map((m) => (m.id === mixId ? { ...m, playbackTime } : m));
+}
+
+function updateActiveMix(
+  mixes: Mix[],
+  activeMixId: string,
+  patch: Partial<Mix>,
+): Mix[] {
+  return mixes.map((m) => (m.id === activeMixId ? { ...m, ...patch } : m));
+}
+
 export const useTimelineStore = create<TimelineState>()(
   persist(
     (set, get) => ({
-  project: initialProject,
-  currentTime: 0,
-  isPlaying: false,
-  audioError: null,
-  trackLoadBusy: false,
-  activeTrackIndex: 0,
-  pendingFileSeek: null,
-  selectedMarkerId: null,
-  isMarkerModalOpen: false,
-
-  fileDuration: 0,
-  isTrackSegmentsModalOpen: false,
-  segmentsFormKey: 0,
-  segmentEditTrackIndex: null as number | null,
-
-  setCurrentTime: (time) => set({ currentTime: time }),
-  setIsPlaying: (playing) => set({ isPlaying: playing }),
-  setAudioError: (error) => set({ audioError: error }),
-  setTrackLoadBusy: (busy) => set({ trackLoadBusy: busy }),
-
-  setActiveTrackIndex: (index) =>
-    set((state) => ({
-      activeTrackIndex: clamp(
-        index,
-        0,
-        Math.max(0, state.project.tracks.length - 1),
-      ),
-    })),
-
-  clearPendingFileSeek: () => set({ pendingFileSeek: null }),
-
-  seekRehearsal: (globalSeconds) => {
-    const { project } = get();
-    const tracks = project.tracks;
-    const total = rehearsalDuration(tracks);
-    const g = clamp(globalSeconds, 0, Math.max(0, total - 1e-6));
-    const { trackIndex, fileTime } = globalTimeToTrackFile(tracks, g);
-    set({
-      currentTime: g,
-      activeTrackIndex: trackIndex,
-      pendingFileSeek: fileTime,
-    });
-  },
-
-  jumpToTrack: (trackIndex) => {
-    const { project } = get();
-    const tracks = project.tracks;
-    if (tracks.length === 0) return;
-    const i = clamp(trackIndex, 0, tracks.length - 1);
-    const offsets = segmentGlobalOffsets(tracks);
-    const tr = tracks[i];
-    set({
-      activeTrackIndex: i,
-      currentTime: offsets[i],
-      pendingFileSeek: tr.segmentStart,
-    });
-  },
-
-  skipRehearsal: (deltaSeconds) => {
-    const { project, currentTime } = get();
-    const total = rehearsalDuration(project.tracks);
-    get().seekRehearsal(clamp(currentTime + deltaSeconds, 0, total));
-  },
-
-  addMarker: (globalTime, type = "comment") => {
-    const id = nanoid(8);
-    const { project } = get();
-    const total = rehearsalDuration(project.tracks);
-    const t = clamp(globalTime, 0, Math.max(0, total - 1e-6));
-    const stepId = resolveStepIdAtTime(project.steps, t);
-    set((state) => ({
-      project: {
-        ...state.project,
-        markers: sortByTime([
-          ...state.project.markers,
-          { id, time: t, type, title: "New marker", note: "", stepId, cueEndTime: null },
-        ]),
-      },
-      selectedMarkerId: id,
-      isMarkerModalOpen: true,
-    }));
-    return id;
-  },
-
-  updateMarker: (id, patch) =>
-    set((state) => ({
-      project: {
-        ...state.project,
-        markers: sortByTime(
-          state.project.markers.map((m) =>
-            m.id === id ? { ...m, ...patch } : m,
-          ),
-        ),
-      },
-    })),
-
-  deleteMarker: (id) =>
-    set((state) => ({
-      project: {
-        ...state.project,
-        markers: state.project.markers.filter((m) => m.id !== id),
-      },
+      mixes: initialMixes,
+      activeMixId: initialMixes[0]?.id ?? "",
+      activeTrackIndex: 0,
+      currentTime: 0,
+      isPlaying: false,
+      audioError: null,
+      trackLoadBusy: true,
+      pendingFileSeek: null,
       selectedMarkerId: null,
       isMarkerModalOpen: false,
-    })),
 
-  setLoopRegion: (start, end) =>
-    set((state) => {
-      const total = rehearsalDuration(state.project.tracks);
-      const safeStart = clamp(Math.min(start, end), 0, total);
-      const safeEnd = clamp(Math.max(start, end), safeStart + 0.1, total);
-      return {
-        project: {
-          ...state.project,
-          loopRegion: {
-            start: safeStart,
-            end: safeEnd,
-            enabled: state.project.loopRegion?.enabled ?? true,
-          },
-        },
-      };
+      fileDuration: 0,
+
+      setCurrentTime: (time) => set({ currentTime: time }),
+      setIsPlaying: (playing) => set({ isPlaying: playing }),
+      setAudioError: (error) => set({ audioError: error }),
+      setTrackLoadBusy: (busy) => set({ trackLoadBusy: busy }),
+      clearPendingFileSeek: () => set({ pendingFileSeek: null }),
+
+      setActiveMix: (mixId) => {
+        const { mixes, activeMixId, currentTime } = get();
+        const target = mixes.find((m) => m.id === mixId);
+        if (!target || mixId === activeMixId) return;
+
+        const withSaved = persistPlaybackOnMix(mixes, activeMixId, currentTime);
+        const len = mixPlaybackDuration(target);
+        const local = clamp(target.playbackTime, 0, Math.max(0, len - 1e-6));
+
+        if (isCompositeMix(target)) {
+          const { trackIndex, fileTime } = globalTimeToTrackFile(
+            target.tracks,
+            local,
+          );
+          set({
+            mixes: withSaved,
+            activeMixId: mixId,
+            activeTrackIndex: trackIndex,
+            currentTime: local,
+            pendingFileSeek: fileTime,
+            selectedMarkerId: null,
+            isMarkerModalOpen: false,
+            audioError: null,
+            trackLoadBusy: true,
+            isPlaying: false,
+          });
+          return;
+        }
+
+        const tr = target.tracks[0];
+        set({
+          mixes: withSaved,
+          activeMixId: mixId,
+          activeTrackIndex: 0,
+          currentTime: local,
+          pendingFileSeek: tr ? danceLocalToFile(tr, local) : null,
+          selectedMarkerId: null,
+          isMarkerModalOpen: false,
+          audioError: null,
+          trackLoadBusy: true,
+          isPlaying: false,
+        });
+      },
+
+      jumpToTrack: (trackIndex) => {
+        const { mixes, activeMixId } = get();
+        const mix = getActiveMix(mixes, activeMixId);
+        if (!mix || !isCompositeMix(mix)) return;
+        const tracks = mix.tracks;
+        if (tracks.length === 0) return;
+        const i = clamp(trackIndex, 0, tracks.length - 1);
+        const offsets = segmentGlobalOffsets(tracks);
+        const tr = tracks[i];
+        set({
+          activeTrackIndex: i,
+          currentTime: offsets[i],
+          pendingFileSeek: tr.segmentStart,
+        });
+      },
+
+      seekPlayback: (seconds) => {
+        const { mixes, activeMixId } = get();
+        const mix = getActiveMix(mixes, activeMixId);
+        if (!mix) return;
+
+        if (isCompositeMix(mix)) {
+          const total = rehearsalDuration(mix.tracks);
+          const g = clamp(seconds, 0, Math.max(0, total - 1e-6));
+          const { trackIndex, fileTime } = globalTimeToTrackFile(mix.tracks, g);
+          set({
+            currentTime: g,
+            activeTrackIndex: trackIndex,
+            pendingFileSeek: fileTime,
+          });
+          return;
+        }
+
+        const tr = mix.tracks[0];
+        if (!tr) return;
+        const len = danceSegmentLength(tr);
+        const local = clamp(seconds, 0, Math.max(0, len - 1e-6));
+        set({
+          currentTime: local,
+          activeTrackIndex: 0,
+          pendingFileSeek: danceLocalToFile(tr, local),
+        });
+      },
+
+      skipPlayback: (deltaSeconds) => {
+        const { currentTime } = get();
+        get().seekPlayback(currentTime + deltaSeconds);
+      },
+
+      addMarker: (time, type = "note", title = "New marker") => {
+        const id = nanoid(8);
+        set((state) => {
+          const mix = getActiveMix(state.mixes, state.activeMixId);
+          if (!mix) return state;
+          const len = mixPlaybackDuration(mix);
+          const t = clamp(time, 0, Math.max(0, len - 1e-6));
+          const stepId = resolveStepIdAtTime(mix.steps, t);
+          const mixes = updateActiveMix(state.mixes, mix.id, {
+            markers: sortByTime([
+              ...mix.markers,
+              {
+                id,
+                time: t,
+                type,
+                title,
+                note: "",
+                stepId,
+                cueEndTime: null,
+              },
+            ]),
+          });
+          return {
+            mixes,
+            selectedMarkerId: id,
+            isMarkerModalOpen: true,
+          };
+        });
+        return id;
+      },
+
+      updateMarker: (id, patch) =>
+        set((state) => ({
+          mixes: state.mixes.map((m) =>
+            m.markers.some((mk) => mk.id === id)
+              ? {
+                  ...m,
+                  markers: sortByTime(
+                    m.markers.map((mk) =>
+                      mk.id === id ? { ...mk, ...patch } : mk,
+                    ),
+                  ),
+                }
+              : m,
+          ),
+        })),
+
+      deleteMarker: (id) =>
+        set((state) => ({
+          mixes: state.mixes.map((m) =>
+            m.markers.some((mk) => mk.id === id)
+              ? { ...m, markers: m.markers.filter((mk) => mk.id !== id) }
+              : m,
+          ),
+          selectedMarkerId: null,
+          isMarkerModalOpen: false,
+        })),
+
+      setLoopRegion: (start, end) =>
+        set((state) => {
+          const mix = getActiveMix(state.mixes, state.activeMixId);
+          if (!mix) return state;
+          const len = mixPlaybackDuration(mix);
+          const safeStart = clamp(Math.min(start, end), 0, len);
+          const safeEnd = clamp(Math.max(start, end), safeStart + 0.1, len);
+          return {
+            mixes: updateActiveMix(state.mixes, mix.id, {
+              loopRegion: {
+                start: safeStart,
+                end: safeEnd,
+                enabled: mix.loopRegion?.enabled ?? true,
+              },
+            }),
+          };
+        }),
+
+      toggleLoopEnabled: () =>
+        set((state) => {
+          const mix = getActiveMix(state.mixes, state.activeMixId);
+          if (!mix?.loopRegion) return state;
+          return {
+            mixes: updateActiveMix(state.mixes, mix.id, {
+              loopRegion: {
+                ...mix.loopRegion,
+                enabled: !mix.loopRegion.enabled,
+              },
+            }),
+          };
+        }),
+
+      clearLoopRegion: () =>
+        set((state) => {
+          const mix = getActiveMix(state.mixes, state.activeMixId);
+          if (!mix) return state;
+          return {
+            mixes: updateActiveMix(state.mixes, mix.id, { loopRegion: undefined }),
+          };
+        }),
+
+      openMarkerModal: (id) =>
+        set({ selectedMarkerId: id, isMarkerModalOpen: true }),
+      closeMarkerModal: () => set({ isMarkerModalOpen: false }),
+
+      setFileDuration: (seconds) =>
+        set({
+          fileDuration: Number.isFinite(seconds) ? Math.max(0, seconds) : 0,
+        }),
+
+      setActiveTrackWindow: (segmentStart, segmentEnd) =>
+        set((state) => {
+          const mix = getActiveMix(state.mixes, state.activeMixId);
+          if (!mix || mix.kind !== "single" || !mix.tracks[0]) return state;
+          const a = Math.max(0, segmentStart);
+          const b = Math.max(a + 0.25, segmentEnd);
+          const tr = { ...mix.tracks[0], segmentStart: a, segmentEnd: b };
+          const len = danceSegmentLength(tr);
+          const newCurrent = clamp(state.currentTime, 0, Math.max(0, len - 1e-6));
+          const tracks = [tr, ...mix.tracks.slice(1)];
+          const mixes = updateActiveMix(state.mixes, mix.id, { tracks });
+          return {
+            mixes,
+            currentTime: newCurrent,
+            pendingFileSeek: danceLocalToFile(tr, newCurrent),
+          };
+        }),
     }),
-
-  toggleLoopEnabled: () =>
-    set((state) => {
-      if (!state.project.loopRegion) return state;
-      return {
-        project: {
-          ...state.project,
-          loopRegion: {
-            ...state.project.loopRegion,
-            enabled: !state.project.loopRegion.enabled,
-          },
-        },
-      };
-    }),
-
-  clearLoopRegion: () =>
-    set((state) => ({
-      project: { ...state.project, loopRegion: undefined },
-    })),
-
-  openMarkerModal: (id) =>
-    set({ selectedMarkerId: id, isMarkerModalOpen: true }),
-  closeMarkerModal: () => set({ isMarkerModalOpen: false }),
-
-  setFileDuration: (seconds) =>
-    set({ fileDuration: Number.isFinite(seconds) ? Math.max(0, seconds) : 0 }),
-
-  openTrackSegmentsModal: (trackIndex) =>
-    set((s) => {
-      const n = s.project.tracks.length;
-      if (n === 0) return s;
-      const i = clamp(trackIndex, 0, n - 1);
-      return {
-        isTrackSegmentsModalOpen: true,
-        segmentEditTrackIndex: i,
-        segmentsFormKey: s.segmentsFormKey + 1,
-      };
-    }),
-  closeTrackSegmentsModal: () =>
-    set({
-      isTrackSegmentsModalOpen: false,
-      segmentEditTrackIndex: null,
-    }),
-
-  setTrackSegments: (updates) =>
-    set((state) => {
-      const nextTracks = state.project.tracks.map((t) => ({ ...t }));
-      for (const u of updates) {
-        const i = clamp(u.index, 0, Math.max(0, nextTracks.length - 1));
-        const a = Math.max(0, u.segmentStart);
-        const b = Math.max(a + 0.25, u.segmentEnd);
-        nextTracks[i] = { ...nextTracks[i], segmentStart: a, segmentEnd: b };
-      }
-      const total = rehearsalDuration(nextTracks);
-      const newCurrent = clamp(state.currentTime, 0, Math.max(0, total - 1e-6));
-      const { trackIndex, fileTime } = globalTimeToTrackFile(
-        nextTracks,
-        newCurrent,
-      );
-      return {
-        project: { ...state.project, tracks: nextTracks },
-        currentTime: newCurrent,
-        activeTrackIndex: trackIndex,
-        pendingFileSeek: fileTime,
-      };
-    }),
-}),
     {
       name: STORAGE_KEY,
       storage: createJSONStorage(() =>
         typeof window === "undefined" ? noopStorage() : localStorage,
       ),
-      partialize: (s) => ({
-        project: s.project,
-        activeTrackIndex: s.activeTrackIndex,
-        currentTime: s.currentTime,
-      }),
+      partialize: (s) => {
+        const { mixes, activeMixId, currentTime } = s;
+        const withPlayback = persistPlaybackOnMix(mixes, activeMixId, currentTime);
+        return {
+          mixes: withPlayback,
+          activeMixId,
+          currentTime,
+        };
+      },
       merge: (persistedState, currentState) =>
         mergePersistedTimeline(persistedState, currentState),
     },
   ),
 );
+
+/** @deprecated Use getActiveMix */
+export const getActiveDance = getActiveMix;

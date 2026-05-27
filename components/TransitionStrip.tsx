@@ -1,73 +1,67 @@
 "use client";
 
+import { useLocale } from "@/hooks/useLocale";
 import { rehearsalDuration } from "@/lib/rehearsal";
-import { MoreVertical } from "lucide-react";
+import { getActiveMix, isCompositeMix } from "@/lib/mix";
 import { useTimelineStore } from "@/store/useTimelineStore";
 
+/** Bolivian flag arcs + logo ring: red · gold · green */
 const SEGMENT_TINT = [
-  "from-cyan-500/25 to-cyan-600/15 ring-cyan-400/40",
-  "from-sky-500/20 to-sky-600/12 ring-sky-400/35",
-  "from-teal-500/20 to-teal-600/12 ring-teal-400/35",
+  "bg-gradient-to-br from-[color-mix(in_srgb,var(--melodia-red)_38%,transparent)] to-[color-mix(in_srgb,var(--melodia-red)_12%,transparent)] ring-[var(--melodia-red)]/55 shadow-sm shadow-black/30",
+  "bg-gradient-to-br from-[color-mix(in_srgb,var(--melodia-gold)_35%,transparent)] to-[color-mix(in_srgb,var(--melodia-gold)_10%,transparent)] ring-[var(--melodia-gold)]/50 shadow-sm shadow-black/25",
+  "bg-gradient-to-br from-[color-mix(in_srgb,var(--melodia-green)_32%,transparent)] to-[color-mix(in_srgb,var(--melodia-green)_10%,transparent)] ring-[var(--melodia-green)]/50 shadow-sm shadow-black/25",
 ];
 
 export default function TransitionStrip() {
-  const tracks = useTimelineStore((s) => s.project.tracks);
+  const { t } = useLocale();
+  const mixes = useTimelineStore((s) => s.mixes);
+  const activeMixId = useTimelineStore((s) => s.activeMixId);
   const activeTrackIndex = useTimelineStore((s) => s.activeTrackIndex);
   const jumpToTrack = useTimelineStore((s) => s.jumpToTrack);
-  const openTrackSegmentsModal = useTimelineStore(
-    (s) => s.openTrackSegmentsModal,
-  );
 
+  const mix = getActiveMix(mixes, activeMixId);
+  if (!mix || !isCompositeMix(mix)) return null;
+
+  const tracks = mix.tracks;
   const total = rehearsalDuration(tracks);
   if (tracks.length === 0 || total <= 0) return null;
 
   return (
-    <div className="space-y-1.5 px-0.5">
-      <div className="flex items-center justify-between text-[10px] uppercase tracking-wider text-slate-500">
-        <span>Transitions</span>
-        <span className="font-mono normal-case text-slate-400">
-          {tracks.length} blocks · {formatShort(total)} total
+    <div className="space-y-1.5 border-b border-stone-800/50 pb-4">
+      <div className="flex items-center justify-between text-[10px] uppercase tracking-wider text-stone-500">
+        <span>{t("transition.mixBlocks")}</span>
+        <span className="font-mono normal-case text-stone-400">
+          {t("transition.songsTotal", {
+            count: tracks.length,
+            total: formatShort(total),
+          })}
         </span>
       </div>
-      <div className="flex h-11 w-full gap-1 overflow-hidden rounded-lg bg-slate-900/80 p-1 ring-1 ring-slate-800">
+      <div className="flex h-12 w-full gap-1.5 overflow-hidden rounded-xl bg-stone-950/60 p-1 ring-1 ring-stone-800/60">
         {tracks.map((tr, i) => {
           const len = Math.max(0.1, tr.segmentEnd - tr.segmentStart);
           const flex = Math.max(0.15, len / total);
           const isActive = i === activeTrackIndex;
           const tint = SEGMENT_TINT[i % SEGMENT_TINT.length];
           return (
-            <div
+            <button
               key={tr.id}
+              type="button"
+              onClick={() => jumpToTrack(i)}
               style={{ flex }}
-              className={`flex min-w-0 gap-0.5 rounded-md ring-1 transition ${
-                isActive ? tint : "bg-slate-800/90 ring-slate-700"
+              className={`min-w-0 rounded-lg px-2 py-1.5 text-left ring-1 transition ${
+                isActive
+                  ? tint
+                  : "bg-stone-800/80 ring-stone-700/70 hover:bg-stone-800 hover:ring-stone-600"
               }`}
             >
-              <button
-                type="button"
-                onClick={() => jumpToTrack(i)}
-                className="min-w-0 flex-1 px-1.5 py-1.5 text-left"
-              >
-                <span className="block truncate text-[11px] font-semibold text-slate-100">
-                  {tr.name}
-                </span>
-                <span className="mt-0.5 block font-mono text-[9px] text-slate-400">
-                  {formatShort(tr.segmentStart)}–{formatShort(tr.segmentEnd)}
-                </span>
-              </button>
-              <button
-                type="button"
-                aria-label={`Edit segment times (${tr.name})`}
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  openTrackSegmentsModal(i);
-                }}
-                className="flex w-7 shrink-0 items-center justify-center rounded-md text-slate-500 hover:bg-black/25 hover:text-slate-200"
-              >
-                <MoreVertical className="h-4 w-4" />
-              </button>
-            </div>
+              <span className="block truncate text-[11px] font-semibold text-stone-100">
+                {tr.name}
+              </span>
+              <span className="mt-0.5 block font-mono text-[9px] text-stone-400">
+                {formatShort(tr.segmentStart)}–{formatShort(tr.segmentEnd)}
+              </span>
+            </button>
           );
         })}
       </div>

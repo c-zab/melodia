@@ -1,8 +1,37 @@
 @import "tailwindcss";
 
+/*
+ * Melodia de Bolivia — palette from brand logo
+ * Red ring & maple leaf · copper "MELODIA" · flag arcs (red, gold, green)
+ * Rainbow skirt → segment / cue variety only
+ */
 :root {
-  --background: #09090b;
-  --foreground: #fafafa;
+  --background: #0a0a0a;
+  --foreground: #fafaf9;
+
+  --melodia-red: #d42630;
+  --melodia-red-bright: #e8333f;
+  --melodia-copper: #d4956a;
+  --melodia-copper-light: #e8b08a;
+  --melodia-gold: #e8b923;
+  --melodia-green: #3d9b4a;
+
+  --player-surface: rgba(16, 16, 16, 0.82);
+  --player-border: rgba(212, 38, 48, 0.22);
+  --wave-unplayed: #5c534d;
+  --wave-progress: var(--melodia-copper);
+  --wave-cursor: #fef3e8;
+
+  --accent: var(--melodia-red);
+  --accent-hover: var(--melodia-red-bright);
+  --accent-muted: rgba(212, 38, 48, 0.16);
+  --accent-ring: rgba(232, 51, 63, 0.5);
+  --accent-text: #fecaca;
+  --accent-text-muted: rgba(254, 202, 202, 0.65);
+
+  --loop-active: rgba(212, 38, 48, 0.3);
+  --loop-inactive: rgba(92, 83, 77, 0.22);
+
   color-scheme: dark;
 }
 

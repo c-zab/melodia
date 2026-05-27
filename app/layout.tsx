@@ -1,5 +1,9 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+
+import Providers from "@/components/Providers";
+import { getMessages, DEFAULT_LOCALE } from "@/lib/i18n";
+
 import "./globals.css";
 
 const geistSans = Geist({
@@ -12,14 +16,15 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+const meta = getMessages(DEFAULT_LOCALE).meta;
+
 export const metadata: Metadata = {
-  title: "Melodia — Rehearsal Timeline",
-  description:
-    "A lightweight choreography timeline editor and rehearsal assistant.",
+  title: meta.title,
+  description: meta.description,
 };
 
 export const viewport: Viewport = {
-  themeColor: "#09090b",
+  themeColor: "#0a0a0a",
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
@@ -32,11 +37,11 @@ export default function RootLayout({
 }>) {
   return (
     <html
-      lang="en"
+      lang={DEFAULT_LOCALE}
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="flex min-h-full flex-col bg-slate-950 text-slate-100">
-        {children}
+      <body className="flex min-h-full flex-col bg-[var(--background)] text-stone-100">
+        <Providers>{children}</Providers>
       </body>
     </html>
   );

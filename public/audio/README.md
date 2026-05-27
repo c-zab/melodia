@@ -1,17 +1,21 @@
 # `/public/audio/`
 
-Drop your MP3 files here.
+Melodia has **two mix categories** in the dropdown:
 
-By default Melodia loads `song-1.mp3` from this folder:
+## Morenada (one mix, three MP3s)
 
-```
-public/audio/song-1.mp3
-```
+`song-1.mp3`, `song-2.mp3`, and `song-3.mp3` play **in sequence** on one rehearsal timeline (with in/out windows per block). Use the **Mix blocks** strip to jump between songs.
 
-If you want to use a different file, either:
+| File | Block |
+|------|--------|
+| `song-1.mp3` | Song 1 (0:00–2:09) |
+| `song-2.mp3` | Song 2 (1:00–2:11) |
+| `song-3.mp3` | Song 3 (0:50–3:00) |
 
-1. Rename your file to `song-1.mp3`, or
-2. Edit the default track in `store/useTimelineStore.ts` (the `initialProject.tracks` array).
+## Caporales (one song)
 
-These files are served as static assets by Next.js, so they're available at
-`/audio/<filename>` from the browser.
+| File | In the app |
+|------|------------|
+| `caporales-julia.mp3` | **Caporales** — full file playback |
+
+Configure mixes in `initialMixes` inside `store/useTimelineStore.ts`.

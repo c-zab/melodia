@@ -1,92 +1,143 @@
 "use client";
 
-import { Activity, Bookmark, MessageSquare } from "lucide-react";
-
-import { markerGlobalToFileInTrack } from "@/lib/rehearsal";
+import { danceLocalToFile } from "@/lib/dance";
+import { getActiveMix, isCompositeMix } from "@/lib/mix";
+import {
+  MARKER_CUE_LEAD_SECONDS,
+  MARKER_META,
+  markerIsJumpable,
+} from "@/lib/markers";
 import { formatMmSs } from "@/lib/timeFormat";
-import { seekToTime } from "@/lib/wavesurfer";
-import { useTimelineStore, type Marker, type MarkerType } from "@/store/useTimelineStore";
-
-const MARKER_ICON: Record<MarkerType, typeof Activity> = {
-  comment: MessageSquare,
-  action: Activity,
-  cue: Bookmark,
-};
-
-const MARKER_TINT: Record<MarkerType, string> = {
-  comment: "text-sky-200 bg-sky-500/15 ring-sky-400/40",
-  action: "text-cyan-100 bg-cyan-500/15 ring-cyan-400/45",
-  cue: "text-amber-200 bg-amber-500/15 ring-amber-400/40",
-};
-
-const MARKER_PIN: Record<MarkerType, string> = {
-  comment: "bg-sky-400/70",
-  action: "bg-cyan-400/80",
-  cue: "bg-amber-400/70",
-};
+import { markerGlobalToFileInTrack } from "@/lib/rehearsal";
+import { useLocale } from "@/hooks/useLocale";
+import { useMarkerPress } from "@/hooks/useMarkerPress";
+import { useTimelineStore } from "@/store/useTimelineStore";
 
 export default function TimelineMarkers() {
-  const markers = useTimelineStore((s) => s.project.markers);
-  const tracks = useTimelineStore((s) => s.project.tracks);
+  const { t } = useLocale();
+  const mixes = useTimelineStore((s) => s.mixes);
+  const activeMixId = useTimelineStore((s) => s.activeMixId);
   const activeTrackIndex = useTimelineStore((s) => s.activeTrackIndex);
+  const mix = getActiveMix(mixes, activeMixId);
+  const markers = mix?.markers ?? [];
   const fileDuration = useTimelineStore((s) => s.fileDuration);
-  const openMarkerModal = useTimelineStore((s) => s.openMarkerModal);
+  if (markers.length === 0 || !mix) return null;
+
+  const composite = isCompositeMix(mix);
+  const tr = mix.tracks[activeTrackIndex] ?? mix.tracks[0];
 
   const visible =
-    fileDuration > 0
+    fileDuration > 0 && tr
       ? markers
           .map((m) => {
-            const fileT = markerGlobalToFileInTrack(
-              tracks,
-              activeTrackIndex,
-              m.time,
-            );
-            return fileT === null ? null : { marker: m, fileT };
+            const fileT = composite
+              ? markerGlobalToFileInTrack(mix.tracks, activeTrackIndex, m.time)
+              : danceLocalToFile(tr, m.time);
+            return fileT != null ? { marker: m, fileT } : null;
           })
-          .filter((x): x is { marker: Marker; fileT: number } => x !== null)
+          .filter((x): x is { marker: (typeof markers)[0]; fileT: number } =>
+            x != null,
+          )
       : [];
 
   return (
-    <div className="px-3 sm:px-4">
-      <div className="relative h-10 w-full">
+    <div className="px-0.5 sm:px-1">
+      <div className="relative h-12 w-full">
         {fileDuration <= 0 ? (
-          <div className="flex h-full items-center text-[11px] text-slate-600">
-            Load audio to place cues on the waveform…
-          </div>
-        ) : visible.length === 0 ? (
-          <div className="flex h-full items-center text-[11px] text-slate-600">
-            No cues in this block yet — add markers while this song is active, or
-            switch blocks to see other cues.
+          <div className="flex h-full items-center text-[11px] text-stone-500">
+            {t("timeline.loadAudio")}
           </div>
         ) : (
           visible.map(({ marker, fileT }) => {
-            const Icon = MARKER_ICON[marker.type];
+            const { Icon, tint, pin } = MARKER_META[marker.type];
             const position = (fileT / fileDuration) * 100;
-            return (
-              <button
-                key={marker.id}
-                type="button"
-                onClick={() => {
-                  seekToTime(marker.time);
-                  openMarkerModal(marker.id);
-                }}
-                style={{ left: `${position}%` }}
-                className="group absolute top-0 -translate-x-1/2 flex flex-col items-center focus:outline-none"
-                title={`${marker.title} · file ${formatMmSs(fileT)} · rehearsal ${formatMmSs(marker.time)}`}
-              >
+            const jumpable = markerIsJumpable(marker.type);
+            const timeLabel = formatMmSs(marker.time);
+            const pinBody = (
+              <>
                 <span
-                  className={`inline-flex items-center justify-center rounded-md p-1 ring-1 transition-transform group-hover:scale-110 ${MARKER_TINT[marker.type]}`}
+                  className={`inline-flex min-h-9 min-w-9 items-center justify-center rounded-md p-1.5 ring-1 ${tint} ${jumpable ? "transition-transform group-hover:scale-110 group-focus-visible:scale-110" : ""}`}
                 >
-                  <Icon className="h-3.5 w-3.5" />
+                  <Icon className="h-4 w-4" />
                 </span>
-                <span
-                  className={`mt-0.5 h-3 w-px ${MARKER_PIN[marker.type]}`}
-                />
-              </button>
+                <span className={`mt-0.5 h-3.5 w-px ${pin}`} />
+              </>
+            );
+
+            if (!jumpable) {
+              return (
+                <div
+                  key={marker.id}
+                  style={{ left: `${position}%` }}
+                  className="absolute top-0 flex -translate-x-1/2 flex-col items-center"
+                  title={t("marker.titleAtTime", {
+                    title: marker.title,
+                    time: timeLabel,
+                  })}
+                  aria-label={t("marker.atTimeNote", {
+                    title: marker.title,
+                    time: timeLabel,
+                  })}
+                >
+                  {pinBody}
+                </div>
+              );
+            }
+
+            return (
+              <CueMarkerPin
+                key={marker.id}
+                markerId={marker.id}
+                markerTime={marker.time}
+                title={marker.title}
+                timeLabel={timeLabel}
+                position={position}
+              >
+                {pinBody}
+              </CueMarkerPin>
             );
           })
         )}
       </div>
     </div>
+  );
+}
+
+function CueMarkerPin({
+  markerId,
+  markerTime,
+  title,
+  timeLabel,
+  position,
+  children,
+}: {
+  markerId: string;
+  markerTime: number;
+  title: string;
+  timeLabel: string;
+  position: number;
+  children: React.ReactNode;
+}) {
+  const { t } = useLocale();
+  const press = useMarkerPress(markerId, markerTime);
+  const hint = t("marker.tapJumpHoldEdit", {
+    seconds: MARKER_CUE_LEAD_SECONDS,
+  });
+
+  return (
+    <button
+      type="button"
+      {...press}
+      style={{ left: `${position}%` }}
+      className="group absolute top-0 flex min-h-11 min-w-11 -translate-x-1/2 touch-manipulation flex-col items-center justify-start rounded-md select-none focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-ring)] focus-visible:ring-offset-2 focus-visible:ring-offset-stone-900"
+      title={`${title} · ${timeLabel} — ${hint}`}
+      aria-label={t("marker.titleAtTimeHint", {
+        title,
+        time: timeLabel,
+        hint,
+      })}
+    >
+      {children}
+    </button>
   );
 }

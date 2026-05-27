@@ -1,5 +1,6 @@
 import type WaveSurfer from "wavesurfer.js";
 
+import { MARKER_CUE_LEAD_SECONDS } from "@/lib/markers";
 import { useTimelineStore } from "@/store/useTimelineStore";
 
 let wsInstance: WaveSurfer | null = null;
@@ -16,13 +17,18 @@ export function playPause(): void {
   void wsInstance?.playPause();
 }
 
-/** Seek to a position on the rehearsal timeline (seconds). */
-export function seekToTime(rehearsalSeconds: number): void {
-  useTimelineStore.getState().seekRehearsal(rehearsalSeconds);
+/** Seek on the active mix timeline (global for Morenada, local for Caporales). */
+export function seekToTime(seconds: number): void {
+  useTimelineStore.getState().seekPlayback(seconds);
+}
+
+/** Jump to a cue with rehearsal lead-in (default 3s before the marker). */
+export function seekToMarkerCue(markerTime: number): void {
+  seekToTime(Math.max(0, markerTime - MARKER_CUE_LEAD_SECONDS));
 }
 
 export function skipSeconds(delta: number): void {
-  useTimelineStore.getState().skipRehearsal(delta);
+  useTimelineStore.getState().skipPlayback(delta);
 }
 
 export function formatTime(seconds: number): string {
